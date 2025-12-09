@@ -1,13 +1,32 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from pyspark.sql.functions import col, lower, desc
+from pyspark.sql.functions import col, lower, desc, avg, sum as _sum, count
 from utils import load_all_data
 import sys
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="FIFA Scout", layout="wide")
-st.title("FIFA Scout")
+
+# --- CUSTOM CSS ---
+st.markdown("""
+<style>
+    div.stButton > button {
+        width: 100%;
+        border-radius: 5px;
+        height: 3em;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- STATE MANAGEMENT ---
+if 'current_page' not in st.session_state:
+    st.session_state['current_page'] = "Advanced Scouting"
+
+def set_page(page_name):
+    st.session_state['current_page'] = page_name
+    st.rerun()
 
 # --- DEFINIZIONE MODULI ---
 FORMATIONS = {
@@ -20,10 +39,10 @@ FORMATIONS = {
 
 # --- UTILS ---
 def format_currency_custom(val):
-    if pd.isna(val) or val == 0: return "€ 0"
+    if pd.isna(val) or val == 0: return "0 EUR"
     if val >= 1_000_000:
-        return f"€ {val/1_000_000:.1f}M"
-    return f"€ {val:,.0f}".replace(",", ".")
+        return f"{val/1_000_000:.1f}M EUR"
+    return f"{val:,.0f} EUR".replace(",", ".")
 
 # --- 1. DATA LOADING ---
 @st.cache_resource(show_spinner="Loading Datasets...")
@@ -65,7 +84,7 @@ if "fifa_version" in df_players.columns:
     all_versions = [int(r[0]) for r in df_players.select("fifa_version").distinct().sort(desc("fifa_version")).collect()]
 else: all_versions = []
 
-# --- LOGICA FORMAZIONE ---
+# --- HELPERS ---
 def get_best_lineup(df, module_name="4-3-3"):
     df = df.copy()
     def get_role_group(pos):
@@ -79,7 +98,6 @@ def get_best_lineup(df, module_name="4-3-3"):
     df['role_group'] = df['player_positions'].apply(get_role_group)
     df = df.sort_values('overall', ascending=False)
     
-    # 1. Separazione GK
     df['is_gk'] = df['player_positions'].apply(lambda x: 'GK' in x.split(',')[0] if x else False)
     gk_pool = df[df['is_gk'] == True]
     outfield_pool = df[df['is_gk'] == False]
@@ -122,18 +140,17 @@ def get_best_lineup(df, module_name="4-3-3"):
     bench_df = df[~df['short_name'].isin(selected_ids)]
     return starters_df, bench_df
 
-# --- PLOT PITCH ---
 def create_pitch_plot(players_df):
     fig = go.Figure()
     field_shapes = [
-        dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(width=0), fillcolor="#43a047"),
-        dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(color="white", width=2)),
-        dict(type="line", x0=50, y0=0, x1=50, y1=100, layer="below", line=dict(color="white", width=2)),
-        dict(type="circle", x0=40, y0=40, x1=60, y1=60, layer="below", line=dict(color="white", width=2)),
-        dict(type="rect", x0=0, y0=20, x1=17, y1=80, layer="below", line=dict(color="white", width=2)),
-        dict(type="rect", x0=83, y0=20, x1=100, y1=80, layer="below", line=dict(color="white", width=2)),
-        dict(type="rect", x0=-2, y0=45, x1=0, y1=55, layer="below", line=dict(color="white", width=2)),
-        dict(type="rect", x0=100, y0=45, x1=102, y1=55, layer="below", line=dict(color="white", width=2)),
+        dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(width=0), fillcolor="#2e7d32"),
+        dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="line", x0=50, y0=0, x1=50, y1=100, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="circle", x0=40, y0=40, x1=60, y1=60, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="rect", x0=0, y0=20, x1=17, y1=80, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="rect", x0=83, y0=20, x1=100, y1=80, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="rect", x0=-2, y0=45, x1=0, y1=55, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
+        dict(type="rect", x0=100, y0=45, x1=102, y1=55, layer="below", line=dict(color="rgba(255,255,255,0.8)", width=2)),
     ]
     fig.update_layout(shapes=field_shapes)
     x_positions = {'GK': 5, 'DEF': 25, 'MID': 55, 'FWD': 85}
@@ -170,51 +187,97 @@ def create_pitch_plot(players_df):
         x = x_positions[role]
         for i, player in enumerate(p_list):
             hover_text = f"<b>{player['short_name']}</b><br>OVR: {player['overall']}<br>Pos: {player['player_positions']}"
-            fig.add_trace(go.Scatter(x=[x], y=[ys[i]], mode='markers+text', marker=dict(size=22, color='white', line=dict(color='black', width=2)), text=str(player['overall']), textposition="middle center", textfont=dict(color='black', size=11, family="Arial Black"), hoverinfo="text", hovertext=hover_text, showlegend=False))
-            fig.add_trace(go.Scatter(x=[x], y=[ys[i]-8], mode='text', text=f"<b>{player['short_name']}</b>", textposition="bottom center", textfont=dict(color='white', size=11, family="Arial", shadow="2px 2px 2px black"), hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter(x=[x], y=[ys[i]], mode='markers+text', marker=dict(size=24, color='white', line=dict(color='black', width=2)), text=str(player['overall']), textposition="middle center", textfont=dict(color='black', size=11, family="Arial Black"), hoverinfo="text", hovertext=hover_text, showlegend=False))
+            fig.add_trace(go.Scatter(x=[x], y=[ys[i]-8], mode='text', text=f"<b>{player['short_name']}</b>", textposition="bottom center", textfont=dict(color='white', size=12, family="Arial", shadow="1px 1px 2px black"), hoverinfo="skip", showlegend=False))
 
-    fig.update_layout(xaxis=dict(visible=False, range=[-5, 105]), yaxis=dict(visible=False, range=[0, 100]), plot_bgcolor="#43a047", margin=dict(l=10, r=10, t=10, b=10), height=600, dragmode=False)
+    fig.update_layout(xaxis=dict(visible=False, range=[-5, 105]), yaxis=dict(visible=False, range=[0, 100]), plot_bgcolor="#2e7d32", margin=dict(l=10, r=10, t=10, b=10), height=650, dragmode=False)
     return fig
 
+# --- STATS CALCULATION (FIXED) ---
+def calculate_team_stats(df_team):
+    # Fix: Convertiamo SUBITO in Pandas per evitare l'errore .empty su Spark
+    pdf = df_team.toPandas()
+    
+    if pdf.empty:
+        return {}
+    
+    # Macro-Ruoli per calcoli reparto
+    def get_simple_role(pos):
+        if not pos: return "MID"
+        main = pos.split(',')[0]
+        if 'GK' in main: return "GK"
+        if any(x in main for x in ['B', 'CB']): return "DEF"
+        if any(x in main for x in ['M', 'CDM', 'CAM']): return "MID"
+        return "FWD"
+    
+    pdf['macro'] = pdf['player_positions'].apply(get_simple_role)
+    
+    stats = {
+        "Overall Avg": pdf['overall'].mean(),
+        "Attack Avg": pdf[pdf['macro'] == 'FWD']['overall'].mean() if not pdf[pdf['macro'] == 'FWD'].empty else 0,
+        "Midfield Avg": pdf[pdf['macro'] == 'MID']['overall'].mean() if not pdf[pdf['macro'] == 'MID'].empty else 0,
+        "Defense Avg": pdf[pdf['macro'] == 'DEF']['overall'].mean() if not pdf[pdf['macro'] == 'DEF'].empty else 0,
+        "Age Avg": pdf['age'].mean(),
+        "Total Value": pdf['value_eur'].sum(),
+        "Count": len(pdf)
+    }
+    return stats
 
-# ==========================================
-# MODE SELECTOR
-# ==========================================
-st.sidebar.title("Navigation")
-mode = st.sidebar.radio("Menu", ["Advanced Scouting", "Player Comparison", "Team Tactics"])
-st.sidebar.divider()
 
-# ==========================================
-# MODE 1: ADVANCED SCOUTING
-# ==========================================
-if mode == "Advanced Scouting":
-    st.sidebar.header("Filters")
+# =================================================================================
+# SIDEBAR NAVIGATION
+# =================================================================================
+with st.sidebar:
+    st.title("FIFA Scout")
+    st.markdown("Select a tool:")
+    
+    type_scout = "primary" if st.session_state['current_page'] == "Advanced Scouting" else "secondary"
+    if st.button("Advanced Scouting", type=type_scout): set_page("Advanced Scouting")
+        
+    type_comp = "primary" if st.session_state['current_page'] == "Player Comparison" else "secondary"
+    if st.button("Player Comparison", type=type_comp): set_page("Player Comparison")
+        
+    type_team_comp = "primary" if st.session_state['current_page'] == "Team Comparison" else "secondary"
+    if st.button("Team Comparison", type=type_team_comp): set_page("Team Comparison")
+
+    type_tac = "primary" if st.session_state['current_page'] == "Team Tactics" else "secondary"
+    if st.button("Team Tactics", type=type_tac): set_page("Team Tactics")
+        
+    st.divider()
+    st.info("Data based on EA FC Database")
+
+
+# =================================================================================
+# PAGE ROUTER
+# =================================================================================
+
+# --------------------------
+# PAGE 1: ADVANCED SCOUTING
+# --------------------------
+if st.session_state['current_page'] == "Advanced Scouting":
+    st.title("Advanced Scouting Engine")
+    
+    st.sidebar.markdown("### Filters")
     with st.sidebar.form("scout_form"):
         search_query = st.text_input("Search Player Name")
         c1, c2 = st.columns(2)
         sel_league = c1.selectbox("League", ["All"] + all_leagues)
-        
         if sel_league == "All": available_teams = sorted(list(team_to_league.keys()))
         else: available_teams = sorted([t for t, l in team_to_league.items() if l == sel_league])   
-        
         sel_team = c2.selectbox("Club", ["All"] + available_teams)
         if all_versions: sel_ver = st.selectbox("FIFA Version", ["All"] + all_versions)
         else: sel_ver = "All"
-        
         with st.expander("Contracts & Ratings", expanded=True):
-            if "club_contract_valid_until_year" in df_players.columns:
-                max_contract = st.slider("Contract Expiring By", 2023, 2032, 2032)
+            if "club_contract_valid_until_year" in df_players.columns: max_contract = st.slider("Contract Expiring By", 2023, 2032, 2032)
             else: max_contract = None
             if sel_team == "All": min_team_rating = st.slider("Min Team Rating", 50, 99, 50)
             else: min_team_rating = 50
-            
         with st.expander("Role & Technique", expanded=False):
             sel_role = st.text_input("Position (e.g. ST)", "").upper()
             sel_foot = st.selectbox("Preferred Foot", ["All", "Right", "Left"])
             sel_work = st.selectbox("Work Rate", ["All"] + all_works)
             min_skill = st.slider("Skill Moves", 1, 5, 1)
             min_wf = st.slider("Weak Foot", 1, 5, 1)
-            
         with st.expander("Stats & Value", expanded=False):
             val_range = st.slider("Max Value", 0, 150000000, 150000000, step=500000)
             age_range = st.slider("Age", 15, 45, (16, 40))
@@ -246,7 +309,6 @@ if mode == "Advanced Scouting":
         if sel_work != "All": filtered = filtered.filter(col("work_rate") == sel_work)
         if min_skill > 1: filtered = filtered.filter(col("skill_moves") >= min_skill)
         if min_wf > 1: filtered = filtered.filter(col("weak_foot") >= min_wf)
-        
         cols_fetch = ["short_name", "fifa_version", "age", "overall", "potential", "club_name", "value_eur", "pace", "shooting", "passing", "dribbling", "defending", "physic"]
         cols_fetch = [c for c in cols_fetch if c in df_players.columns]
         pdf = filtered.select(cols_fetch).orderBy(desc("overall"), desc("fifa_version")).limit(200).toPandas()
@@ -266,182 +328,211 @@ if mode == "Advanced Scouting":
     elif submitted: st.warning("No players found matching your criteria.")
     else: st.info("Set filters on the left and click SEARCH NOW.")
 
-# ==========================================
-# MODE 2: PLAYER COMPARISON (HEAD TO HEAD)
-# ==========================================
-elif mode == "Player Comparison":
-    st.markdown("## Head-to-Head Comparison")
-    st.markdown("Select two players to see who wins in each category.")
-
-    # Due colonne per i selettori
-    c1, c2 = st.columns(2)
+# --------------------------
+# PAGE 2: PLAYER COMPARISON
+# --------------------------
+elif st.session_state['current_page'] == "Player Comparison":
+    st.title("Head-to-Head Comparison")
     
-    # Ricerca Giocatore 1
+    c1, c2 = st.columns(2)
     with c1:
         st.markdown("### Player A")
         search_p1 = st.text_input("Search Name (Player A)", key="s1")
         ver_p1 = st.selectbox("Version (A)", all_versions, index=0, key="v1") if all_versions else None
-        
         cand1 = pd.DataFrame()
         if search_p1:
             f1 = df_players.filter(lower(col("short_name")).contains(search_p1.lower()))
             if ver_p1: f1 = f1.filter(col("fifa_version") == ver_p1)
             cand1 = f1.select("short_name", "club_name", "overall").limit(5).toPandas()
-            
         opts1 = [f"{r['short_name']} ({r['club_name']}) - {r['overall']}" for _, r in cand1.iterrows()] if not cand1.empty else []
         sel_p1 = st.selectbox("Select Player A", opts1, key="sel1")
 
-    # Ricerca Giocatore 2
     with c2:
         st.markdown("### Player B")
         search_p2 = st.text_input("Search Name (Player B)", key="s2")
         ver_p2 = st.selectbox("Version (B)", all_versions, index=0, key="v2") if all_versions else None
-        
         cand2 = pd.DataFrame()
         if search_p2:
             f2 = df_players.filter(lower(col("short_name")).contains(search_p2.lower()))
             if ver_p2: f2 = f2.filter(col("fifa_version") == ver_p2)
             cand2 = f2.select("short_name", "club_name", "overall").limit(5).toPandas()
-            
         opts2 = [f"{r['short_name']} ({r['club_name']}) - {r['overall']}" for _, r in cand2.iterrows()] if not cand2.empty else []
         sel_p2 = st.selectbox("Select Player B", opts2, key="sel2")
 
-    # Bottone Confronto
-    if st.button("COMPARE PLAYERS", type="primary"):
+    if st.button("COMPARE PLAYERS", type="primary", use_container_width=True):
         if sel_p1 and sel_p2:
             name1 = sel_p1.split(" (")[0]
             name2 = sel_p2.split(" (")[0]
-            
-            # Fetch dati
             stats_cols = ["short_name", "overall", "potential", "pace", "shooting", "passing", "dribbling", "defending", "physic", "age", "height_cm", "weight_kg", "weak_foot", "skill_moves"]
             stats_cols = [c for c in stats_cols if c in df_players.columns]
-            
             p1_data = df_players.filter((col("short_name") == name1) & (col("fifa_version") == ver_p1)).select(stats_cols).toPandas().iloc[0]
             p2_data = df_players.filter((col("short_name") == name2) & (col("fifa_version") == ver_p2)).select(stats_cols).toPandas().iloc[0]
             
             st.divider()
-            
-            # --- CONFRONTO VISIVO ---
-            # Definiamo le metriche da confrontare
-            metrics = [
-                ("Overall Rating", "overall"),
-                ("Potential", "potential"),
-                ("Pace", "pace"),
-                ("Shooting", "shooting"),
-                ("Passing", "passing"),
-                ("Dribbling", "dribbling"),
-                ("Defending", "defending"),
-                ("Physicality", "physic"),
-                ("Age", "age"), # Attenzione: per l'età, minore è meglio? Dipende. Qui trattiamo maggiore come numero più alto.
-                ("Height (cm)", "height_cm"),
-                ("Weight (kg)", "weight_kg"),
-                ("Weak Foot", "weak_foot"),
-                ("Skill Moves", "skill_moves")
-            ]
-            
-            # Intestazione Colonne
+            metrics = [("Overall Rating", "overall"), ("Potential", "potential"), ("Pace", "pace"), ("Shooting", "shooting"), ("Passing", "passing"), ("Dribbling", "dribbling"), ("Defending", "defending"), ("Physicality", "physic"), ("Age", "age"), ("Height (cm)", "height_cm"), ("Weight (kg)", "weight_kg"), ("Weak Foot", "weak_foot"), ("Skill Moves", "skill_moves")]
             h1, h2, h3 = st.columns([1, 0.5, 1])
             h1.markdown(f"<h3 style='text-align: center;'>{p1_data['short_name']}</h3>", unsafe_allow_html=True)
             h2.markdown("<h3 style='text-align: center;'>VS</h3>", unsafe_allow_html=True)
             h3.markdown(f"<h3 style='text-align: center;'>{p2_data['short_name']}</h3>", unsafe_allow_html=True)
-            
             st.markdown("---")
-
-            # Loop per ogni statistica
             for label, key in metrics:
                 if key not in p1_data or key not in p2_data: continue
-                
-                val1 = p1_data[key]
-                val2 = p2_data[key]
-                
-                # Gestione valori nulli
+                val1 = p1_data[key]; val2 = p2_data[key]
                 if pd.isna(val1): val1 = 0
                 if pd.isna(val2): val2 = 0
-                
-                # Calcolo differenza
                 diff = val1 - val2
-                
-                # Formattazione Colore
-                # Se vince P1 -> P1 Verde, P2 Grigio
-                # Se vince P2 -> P1 Grigio, P2 Verde
-                # Se Pareggio -> Entrambi Grigio
-                
-                # Eccezione Età: In genere più giovane è meglio per potenziale, ma più vecchio per esperienza.
-                # Qui trattiamo valore numerico puro: più alto vince il verde.
-                
-                color1 = "lightgreen" if val1 > val2 else "white"
-                weight1 = "bold" if val1 > val2 else "normal"
-                
-                color2 = "lightgreen" if val2 > val1 else "white"
-                weight2 = "bold" if val2 > val1 else "normal"
-                
-                # Simbolo differenza
+                color1 = "green" if val1 > val2 else "white"; weight1 = "bold" if val1 > val2 else "normal"
+                color2 = "green" if val2 > val1 else "white"; weight2 = "bold" if val2 > val1 else "normal"
                 if diff > 0: diff_str = f"+{int(diff)}"
-                elif diff < 0: diff_str = f"{int(diff)}" # il meno c'è già
+                elif diff < 0: diff_str = f"{int(diff)}"
                 else: diff_str = "="
-                
-                # Rendering Riga
                 rc1, rc2, rc3 = st.columns([1, 0.5, 1])
-                
-                with rc1:
-                    st.markdown(f"<div style='text-align: center; color: {color1}; font-weight: {weight1}; font-size: 18px;'>{int(val1)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{label}</div>", unsafe_allow_html=True)
-                
-                with rc2:
-                    st.markdown(f"<div style='text-align: center; font-weight: bold; padding-top: 10px;'>{diff_str}</div>", unsafe_allow_html=True)
-                    
-                with rc3:
-                    st.markdown(f"<div style='text-align: center; color: {color2}; font-weight: {weight2}; font-size: 18px;'>{int(val2)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{label}</div>", unsafe_allow_html=True)
-                
+                with rc1: st.markdown(f"<div style='text-align: center; color: {color1}; font-weight: {weight1}; font-size: 18px;'>{int(val1)}</div><div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                with rc2: st.markdown(f"<div style='text-align: center; font-weight: bold; padding-top: 10px;'>{diff_str}</div>", unsafe_allow_html=True)
+                with rc3: st.markdown(f"<div style='text-align: center; color: {color2}; font-weight: {weight2}; font-size: 18px;'>{int(val2)}</div><div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
                 st.divider()
-
-            # --- RADAR CHART FINALE ---
+            
             st.subheader("Radar Comparison")
             radar_cats = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physic']
-            
             fig = go.Figure()
-            
-            # P1 Trace
-            vals1 = [p1_data[c] for c in radar_cats]
-            vals1 += [vals1[0]]
+            vals1 = [p1_data[c] for c in radar_cats]; vals1 += [vals1[0]]
             fig.add_trace(go.Scatterpolar(r=vals1, theta=radar_cats + [radar_cats[0]], fill='toself', name=p1_data['short_name']))
-            
-            # P2 Trace
-            vals2 = [p2_data[c] for c in radar_cats]
-            vals2 += [vals2[0]]
+            vals2 = [p2_data[c] for c in radar_cats]; vals2 += [vals2[0]]
             fig.add_trace(go.Scatterpolar(r=vals2, theta=radar_cats + [radar_cats[0]], fill='toself', name=p2_data['short_name']))
-            
             fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
-
         else:
             st.warning("Please select both players to compare.")
 
-# ==========================================
-# MODE 3: TEAM TACTICS
-# ==========================================
-elif mode == "Team Tactics":
-    st.header("Team Squad Builder")
-    st.markdown("Select a team and year to visualize the **Best 11** on the pitch.")
+# --------------------------
+# PAGE 3: TEAM COMPARISON (NUOVA)
+# --------------------------
+elif st.session_state['current_page'] == "Team Comparison":
+    st.title("Team Analysis & Comparison")
     
+    col1, col2 = st.columns(2)
+    
+    # SELEZIONE TEAM A
+    with col1:
+        st.markdown("### Team A")
+        l1 = st.selectbox("League A", [""] + all_leagues, key="l1")
+        teams1 = sorted([t for t, l in team_to_league.items() if l == l1]) if l1 else []
+        t1 = st.selectbox("Club A", teams1, key="t1")
+        v1 = st.selectbox("Version A", all_versions, index=0, key="v_t1") if all_versions else None
+    
+    # SELEZIONE TEAM B
+    with col2:
+        st.markdown("### Team B")
+        l2 = st.selectbox("League B", [""] + all_leagues, key="l2")
+        teams2 = sorted([t for t, l in team_to_league.items() if l == l2]) if l2 else []
+        t2 = st.selectbox("Club B", teams2, key="t2")
+        v2 = st.selectbox("Version B", all_versions, index=0, key="v_t2") if all_versions else None
+        
+    if st.button("COMPARE TEAMS", type="primary"):
+        if t1 and t2:
+            # Recupera dati Team A
+            df_a = df_players.filter((col("club_name") == t1) & (col("fifa_version") == v1))
+            stats_a = calculate_team_stats(df_a)
+            
+            # Recupera dati Team B
+            df_b = df_players.filter((col("club_name") == t2) & (col("fifa_version") == v2))
+            stats_b = calculate_team_stats(df_b)
+            
+            if stats_a and stats_b:
+                st.divider()
+                
+                # METRICHE SIDE-BY-SIDE
+                metrics = [
+                    ("Overall Rating", "Overall Avg", ".1f"),
+                    ("Attack Rating", "Attack Avg", ".1f"),
+                    ("Midfield Rating", "Midfield Avg", ".1f"),
+                    ("Defense Rating", "Defense Avg", ".1f"),
+                    ("Average Age", "Age Avg", ".1f"),
+                    ("Total Value", "Total Value", "currency")
+                ]
+                
+                # Header
+                h1, h2, h3 = st.columns([1, 0.5, 1])
+                h1.markdown(f"<h3 style='text-align: center;'>{t1}</h3>", unsafe_allow_html=True)
+                h2.markdown("<h3 style='text-align: center;'>VS</h3>", unsafe_allow_html=True)
+                h3.markdown(f"<h3 style='text-align: center;'>{t2}</h3>", unsafe_allow_html=True)
+                st.markdown("---")
+                
+                for label, key, fmt in metrics:
+                    val_a = stats_a.get(key, 0)
+                    val_b = stats_b.get(key, 0)
+                    
+                    diff = val_a - val_b
+                    
+                    # Colori
+                    if val_a > val_b:
+                        c_a, w_a = "green", "bold"
+                        c_b, w_b = "white", "normal"
+                    elif val_b > val_a:
+                        c_a, w_a = "white", "normal"
+                        c_b, w_b = "green", "bold"
+                    else:
+                        c_a = c_b = "white"
+                        w_a = w_b = "normal"
+                        
+                    # Formattazione valori
+                    if fmt == "currency":
+                        str_a = format_currency_custom(val_a)
+                        str_b = format_currency_custom(val_b)
+                        diff_str = "" # Non mostriamo diff numerica per valuta, troppo lungo
+                    else:
+                        str_a = f"{val_a:.1f}"
+                        str_b = f"{val_b:.1f}"
+                        if diff > 0: diff_str = f"+{diff:.1f}"
+                        elif diff < 0: diff_str = f"{diff:.1f}"
+                        else: diff_str = "="
+
+                    # Render
+                    rc1, rc2, rc3 = st.columns([1, 0.5, 1])
+                    with rc1: st.markdown(f"<div style='text-align: center; color: {c_a}; font-weight: {w_a}; font-size: 20px;'>{str_a}</div><div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                    with rc2: st.markdown(f"<div style='text-align: center; font-weight: bold; padding-top: 10px;'>{diff_str}</div>", unsafe_allow_html=True)
+                    with rc3: st.markdown(f"<div style='text-align: center; color: {c_b}; font-weight: {w_b}; font-size: 20px;'>{str_b}</div><div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                    st.divider()
+                
+                # RADAR
+                st.subheader("Team Radar Comparison")
+                radar_cats = ["Attack Avg", "Midfield Avg", "Defense Avg", "Overall Avg"]
+                
+                fig = go.Figure()
+                vals_a = [stats_a[k] for k in radar_cats]; vals_a += [vals_a[0]]
+                fig.add_trace(go.Scatterpolar(r=vals_a, theta=[k.replace(" Avg", "") for k in radar_cats] + [radar_cats[0].replace(" Avg", "")], fill='toself', name=t1))
+                
+                vals_b = [stats_b[k] for k in radar_cats]; vals_b += [vals_b[0]]
+                fig.add_trace(go.Scatterpolar(r=vals_b, theta=[k.replace(" Avg", "") for k in radar_cats] + [radar_cats[0].replace(" Avg", "")], fill='toself', name=t2))
+                
+                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[50, 95])), showlegend=True)
+                st.plotly_chart(fig, use_container_width=True)
+                
+            else:
+                st.error("Could not calculate stats for one of the teams.")
+        else:
+            st.warning("Please select both teams.")
+
+# --------------------------
+# PAGE 4: TEAM TACTICS
+# --------------------------
+elif st.session_state['current_page'] == "Team Tactics":
+    st.title("Team Squad Builder")
     col_l, col_t, col_y = st.columns(3)
     sel_league_tac = col_l.selectbox("Select League", all_leagues)
     clubs_in_league = sorted([t for t, l in team_to_league.items() if l == sel_league_tac])
     sel_club_tac = col_t.selectbox("Select Club", clubs_in_league)
     sel_year_tac = col_y.selectbox("Select Year", all_versions, index=0) if all_versions else None
-    
     st.divider()
     col_mod, _ = st.columns([1, 2])
     sel_formation = col_mod.selectbox("Select Tactical Module", list(FORMATIONS.keys()), index=0)
     
-    if st.button("Show Squad"):
+    if st.button("Show Squad", type="primary"):
         with st.spinner(f"Scouting {sel_club_tac} ({sel_year_tac}) - Module {sel_formation}..."):
             df_squad = df_players.filter((col("club_name") == sel_club_tac) & (col("fifa_version") == sel_year_tac))
             cols_needed = ["short_name", "player_positions", "overall", "potential", "age", "value_eur", "pace", "shooting", "passing", "dribbling", "defending", "physic"]
             cols_needed = [c for c in cols_needed if c in df_players.columns]
             squad_pdf = df_squad.select(cols_needed).orderBy(desc("overall")).toPandas()
-            
             if not squad_pdf.empty:
                 starters, bench = get_best_lineup(squad_pdf, module_name=sel_formation)
                 st.subheader(f"Starting XI - {sel_club_tac} ({sel_formation})")
