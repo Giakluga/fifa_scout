@@ -9,16 +9,13 @@ import sys
 st.set_page_config(page_title="FIFA Scout", layout="wide")
 st.title("FIFA Scout")
 
-# --- DEFINIZIONE MODULI TATTICI ---
-# Definiamo quanti giocatori servono per ogni linea (GK è sempre 1)
+# --- DEFINIZIONE MODULI ---
 FORMATIONS = {
-    "4-3-3": {"DEF": 4, "MID": 3, "FWD": 3},
-    "4-4-2": {"DEF": 4, "MID": 4, "FWD": 2},
-    "3-5-2": {"DEF": 3, "MID": 5, "FWD": 2},
-    "5-3-2": {"DEF": 5, "MID": 3, "FWD": 2},
-    "3-4-3": {"DEF": 3, "MID": 4, "FWD": 3},
-    "4-5-1": {"DEF": 4, "MID": 5, "FWD": 1},
-    "5-4-1": {"DEF": 5, "MID": 4, "FWD": 1}
+    "4-3-3": {"DEF": ["LB", "CB", "CB", "RB"], "MID": ["CM", "CDM", "CM"], "FWD": ["LW", "ST", "RW"]},
+    "4-4-2": {"DEF": ["LB", "CB", "CB", "RB"], "MID": ["LM", "CM", "CM", "RM"], "FWD": ["ST", "ST"]},
+    "4-2-3-1": {"DEF": ["LB", "CB", "CB", "RB"], "MID": ["CDM", "CDM", "CAM", "LM", "RM"], "FWD": ["ST"]},
+    "3-5-2": {"DEF": ["CB", "CB", "CB"], "MID": ["LM", "CDM", "CM", "CDM", "RM"], "FWD": ["ST", "ST"]},
+    "3-4-3": {"DEF": ["CB", "CB", "CB"], "MID": ["LM", "CM", "CM", "RM"], "FWD": ["LW", "ST", "RW"]}
 }
 
 # --- UTILS ---
@@ -68,11 +65,9 @@ if "fifa_version" in df_players.columns:
     all_versions = [int(r[0]) for r in df_players.select("fifa_version").distinct().sort(desc("fifa_version")).collect()]
 else: all_versions = []
 
-# --- LOGICA FORMAZIONE (MODULI SELEZIONABILI) ---
+# --- LOGICA FORMAZIONE ---
 def get_best_lineup(df, module_name="4-3-3"):
     df = df.copy()
-    
-    # 1. Definisci Ruoli
     def get_role_group(pos):
         if not pos: return "MID"
         main = pos.split(',')[0]
@@ -84,56 +79,52 @@ def get_best_lineup(df, module_name="4-3-3"):
     df['role_group'] = df['player_positions'].apply(get_role_group)
     df = df.sort_values('overall', ascending=False)
     
-    # 2. Leggi la configurazione del modulo scelto
-    config = FORMATIONS.get(module_name, FORMATIONS["4-3-3"])
+    # 1. Separazione GK
+    df['is_gk'] = df['player_positions'].apply(lambda x: 'GK' in x.split(',')[0] if x else False)
+    gk_pool = df[df['is_gk'] == True]
+    outfield_pool = df[df['is_gk'] == False]
     
-    # 3. Seleziona i giocatori per reparto
     starters = []
+    if not gk_pool.empty: starters.append(gk_pool.iloc[0])
     
-    # Portiere (Sempre 1)
-    gk = df[df['role_group'] == 'GK'].head(1)
-    starters.append(gk)
+    config = FORMATIONS.get(module_name, FORMATIONS["4-3-3"])
+    target_slots = config["DEF"] + config["MID"] + config["FWD"]
+    selected_ids = [starters[0]['short_name']] if starters else []
     
-    # Difensori
-    defs = df[df['role_group'] == 'DEF'].head(config['DEF'])
-    starters.append(defs)
-    
-    # Centrocampisti
-    mids = df[df['role_group'] == 'MID'].head(config['MID'])
-    starters.append(mids)
-    
-    # Attaccanti
-    fwds = df[df['role_group'] == 'FWD'].head(config['FWD'])
-    starters.append(fwds)
-    
-    # Uniamo i titolari scelti
-    lineup = pd.concat(starters)
-    
-    # 4. PANIC MODE (Se mancano giocatori per completare l'11)
-    # Esempio: voglio 3 punte ma la squadra ne ha solo 2.
-    if len(lineup) < 11:
-        needed = 11 - len(lineup)
-        already_picked = lineup['short_name'].tolist()
+    def player_can_play(pos_str, target_role):
+        if target_role == "CB" and ("CB" in pos_str): return True
+        if target_role in ["LB", "LWB"] and any(x in pos_str for x in ["LB", "LWB"]): return True
+        if target_role in ["RB", "RWB"] and any(x in pos_str for x in ["RB", "RWB"]): return True
+        if target_role in ["CDM", "CM", "CAM"] and any(x in pos_str for x in ["M", "CDM", "CAM"]): return True
+        if target_role in ["LM", "LW"] and any(x in pos_str for x in ["LM", "LW"]): return True
+        if target_role in ["RM", "RW"] and any(x in pos_str for x in ["RM", "RW"]): return True
+        if target_role == "ST" and any(x in pos_str for x in ["ST", "CF"]): return True
+        return False
+
+    for target in target_slots:
+        candidates = outfield_pool[~outfield_pool['short_name'].isin(selected_ids)]
+        match = None
+        for _, p in candidates.iterrows():
+            if player_can_play(p['player_positions'], target):
+                match = p
+                break
         
-        # Prendi i migliori rimasti (esclusi portieri)
-        remaining = df[
-            (df['role_group'] != 'GK') & 
-            (~df['short_name'].isin(already_picked))
-        ]
-        
-        fillers = remaining.head(needed)
-        lineup = pd.concat([lineup, fillers])
-    
-    # Separiamo Panchina
-    starters_df = lineup.head(11) # Sicurezza finale
-    bench_df = df[~df['short_name'].isin(starters_df['short_name'])]
-    
+        if match is not None:
+            starters.append(match)
+            selected_ids.append(match['short_name'])
+        else:
+            if not candidates.empty:
+                best_remaining = candidates.iloc[0]
+                starters.append(best_remaining)
+                selected_ids.append(best_remaining['short_name'])
+
+    starters_df = pd.DataFrame(starters)
+    bench_df = df[~df['short_name'].isin(selected_ids)]
     return starters_df, bench_df
 
 # --- PLOT PITCH ---
 def create_pitch_plot(players_df):
     fig = go.Figure()
-
     field_shapes = [
         dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(width=0), fillcolor="#43a047"),
         dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(color="white", width=2)),
@@ -145,10 +136,9 @@ def create_pitch_plot(players_df):
         dict(type="rect", x0=100, y0=45, x1=102, y1=55, layer="below", line=dict(color="white", width=2)),
     ]
     fig.update_layout(shapes=field_shapes)
-
     x_positions = {'GK': 5, 'DEF': 25, 'MID': 55, 'FWD': 85}
 
-    def get_role_group_plot(pos):
+    def get_macro_role(pos):
         if not pos: return "MID"
         main = pos.split(',')[0]
         if 'GK' in main: return 'GK'
@@ -156,9 +146,16 @@ def create_pitch_plot(players_df):
         if any(x in main for x in ['M', 'CDM', 'CAM', 'CM', 'LM', 'RM']): return 'MID'
         return 'FWD'
 
+    def get_position_score(positions):
+        if not positions: return 50
+        main_pos = positions.split(',')[0]
+        scores = {'LW': 90, 'LF': 90, 'LB': 90, 'ST': 50, 'CF': 50, 'CAM': 50, 'CM': 50, 'CDM': 50, 'CB': 50, 'GK': 50, 'RW': 10, 'RF': 10, 'RB': 10}
+        return scores.get(main_pos, 50)
+
     roles = {'GK': [], 'DEF': [], 'MID': [], 'FWD': []}
     for _, player in players_df.iterrows():
-        r = get_role_group_plot(player['player_positions'])
+        r = get_macro_role(player['player_positions'])
+        player['pos_score'] = get_position_score(player['player_positions'])
         roles[r].append(player)
 
     def get_y_coords(count):
@@ -168,31 +165,13 @@ def create_pitch_plot(players_df):
 
     for role, p_list in roles.items():
         if not p_list: continue
+        p_list.sort(key=lambda x: x['pos_score'], reverse=True)
         ys = get_y_coords(len(p_list))
         x = x_positions[role]
-        
         for i, player in enumerate(p_list):
             hover_text = f"<b>{player['short_name']}</b><br>OVR: {player['overall']}<br>Pos: {player['player_positions']}"
-            fig.add_trace(go.Scatter(
-                x=[x], y=[ys[i]],
-                mode='markers+text',
-                marker=dict(size=22, color='white', line=dict(color='black', width=2)),
-                text=str(player['overall']),
-                textposition="middle center",
-                textfont=dict(color='black', size=11, family="Arial Black"),
-                hoverinfo="text",
-                hovertext=hover_text,
-                showlegend=False
-            ))
-            fig.add_trace(go.Scatter(
-                x=[x], y=[ys[i] - 8],
-                mode='text',
-                text=f"<b>{player['short_name']}</b>",
-                textposition="bottom center",
-                textfont=dict(color='white', size=11, family="Arial", shadow="2px 2px 2px black"),
-                hoverinfo="skip",
-                showlegend=False
-            ))
+            fig.add_trace(go.Scatter(x=[x], y=[ys[i]], mode='markers+text', marker=dict(size=22, color='white', line=dict(color='black', width=2)), text=str(player['overall']), textposition="middle center", textfont=dict(color='black', size=11, family="Arial Black"), hoverinfo="text", hovertext=hover_text, showlegend=False))
+            fig.add_trace(go.Scatter(x=[x], y=[ys[i]-8], mode='text', text=f"<b>{player['short_name']}</b>", textposition="bottom center", textfont=dict(color='white', size=11, family="Arial", shadow="2px 2px 2px black"), hoverinfo="skip", showlegend=False))
 
     fig.update_layout(xaxis=dict(visible=False, range=[-5, 105]), yaxis=dict(visible=False, range=[0, 100]), plot_bgcolor="#43a047", margin=dict(l=10, r=10, t=10, b=10), height=600, dragmode=False)
     return fig
@@ -252,8 +231,7 @@ if mode == "Advanced Scouting":
         else:
             valid_clubs = None
             if sel_league != "All": valid_clubs = set([c for c, l in team_to_league.items() if l == sel_league])
-            if min_team_rating > 50:
-                pass 
+            if min_team_rating > 50: pass
             if valid_clubs is not None:
                 if not valid_clubs: filtered = filtered.filter("1=0")
                 else: filtered = filtered.filter(col("club_name").isin(list(valid_clubs)))
@@ -271,80 +249,174 @@ if mode == "Advanced Scouting":
         
         cols_fetch = ["short_name", "fifa_version", "age", "overall", "potential", "club_name", "value_eur", "pace", "shooting", "passing", "dribbling", "defending", "physic"]
         cols_fetch = [c for c in cols_fetch if c in df_players.columns]
-        
         pdf = filtered.select(cols_fetch).orderBy(desc("overall"), desc("fifa_version")).limit(200).toPandas()
         st.session_state['res_scout'] = pdf
 
     if 'res_scout' in st.session_state and not st.session_state['res_scout'].empty:
         pdf_view = st.session_state['res_scout'].copy()
-        
         pdf_view["League"] = pdf_view["club_name"].map(team_to_league)
         pdf_view["Coach ID"] = pdf_view["club_name"].map(team_to_coach_id)
         pdf_view["Coach"] = pdf_view["Coach ID"].map(coach_map)
-
         if "fifa_version" in pdf_view.columns: pdf_view["Edition"] = pdf_view["fifa_version"].apply(lambda x: f"FIFA {int(x)}" if pd.notnull(x) else "")
         if "value_eur" in pdf_view.columns: pdf_view["Value"] = pdf_view["value_eur"].apply(format_currency_custom)
-        
         display_cols = ["short_name", "Edition", "age", "overall", "potential", "club_name", "League", "Coach", "Value"]
         display_cols = [c for c in display_cols if c in pdf_view.columns]
-
         st.subheader(f"Search Results: {len(pdf_view)}")
         st.dataframe(pdf_view[display_cols], use_container_width=True, height=700, hide_index=True, column_config={"short_name": "Name", "club_name": "Club", "age": "Age", "overall": st.column_config.ProgressColumn("Overall", format="%d", min_value=0, max_value=100)})
     elif submitted: st.warning("No players found matching your criteria.")
     else: st.info("Set filters on the left and click SEARCH NOW.")
 
 # ==========================================
-# MODE 2: PLAYER COMPARISON
+# MODE 2: PLAYER COMPARISON (HEAD TO HEAD)
 # ==========================================
 elif mode == "Player Comparison":
-    st.markdown("## Direct Comparison")
-    col_search, col_ver = st.columns([3, 1])
-    search_cmp = col_search.text_input("Search player name to add:", placeholder="e.g. Messi")
-    if all_versions: ver_cmp = col_ver.selectbox("DB Version", all_versions, index=0)
-    else: ver_cmp = None
-    candidates = pd.DataFrame()
-    if search_cmp:
-        filt = df_players.filter(lower(col("short_name")).contains(search_cmp.lower()))
-        if ver_cmp: filt = filt.filter(col("fifa_version") == ver_cmp)
-        candidates = filt.select("short_name", "club_name", "overall", "player_positions").limit(10).toPandas()
-    if not candidates.empty:
-        candidates["label"] = candidates["short_name"] + " (" + candidates["club_name"] + ") - " + candidates["overall"].astype(str)
-        options = candidates["label"].tolist()
-    else: options = []
-    if 'selected_players' not in st.session_state: st.session_state['selected_players'] = []
-    new_selection = st.selectbox("Select from results:", [""] + options)
-    if new_selection and new_selection != "":
-        if new_selection not in st.session_state['selected_players']:
-            if len(st.session_state['selected_players']) < 3: st.session_state['selected_players'].append(new_selection)
-            else: st.warning("Maximum 3 players for comparison.")
-    if st.button("Clear Comparison"):
-        st.session_state['selected_players'] = []
-        st.rerun()
-    selected_labels = st.session_state['selected_players']
-    if selected_labels:
-        names = [s.split(" (")[0] for s in selected_labels]
-        stats_cols = ["short_name", "overall", "potential", "pace", "shooting", "passing", "dribbling", "defending", "physic", "value_eur", "age", "height_cm", "weight_kg", "weak_foot", "skill_moves"]
-        stats_cols = [c for c in stats_cols if c in df_players.columns]
-        cmp_df = df_players.filter(col("short_name").isin(names))
-        if ver_cmp: cmp_df = cmp_df.filter(col("fifa_version") == ver_cmp)
-        pdf_cmp = cmp_df.select(stats_cols).dropDuplicates(["short_name"]).toPandas()
-        if not pdf_cmp.empty:
+    st.markdown("## ⚔️ Head-to-Head Comparison")
+    st.markdown("Select two players to see who wins in each category.")
+
+    # Due colonne per i selettori
+    c1, c2 = st.columns(2)
+    
+    # Ricerca Giocatore 1
+    with c1:
+        st.markdown("### Player A")
+        search_p1 = st.text_input("Search Name (Player A)", key="s1")
+        ver_p1 = st.selectbox("Version (A)", all_versions, index=0, key="v1") if all_versions else None
+        
+        cand1 = pd.DataFrame()
+        if search_p1:
+            f1 = df_players.filter(lower(col("short_name")).contains(search_p1.lower()))
+            if ver_p1: f1 = f1.filter(col("fifa_version") == ver_p1)
+            cand1 = f1.select("short_name", "club_name", "overall").limit(5).toPandas()
+            
+        opts1 = [f"{r['short_name']} ({r['club_name']}) - {r['overall']}" for _, r in cand1.iterrows()] if not cand1.empty else []
+        sel_p1 = st.selectbox("Select Player A", opts1, key="sel1")
+
+    # Ricerca Giocatore 2
+    with c2:
+        st.markdown("### Player B")
+        search_p2 = st.text_input("Search Name (Player B)", key="s2")
+        ver_p2 = st.selectbox("Version (B)", all_versions, index=0, key="v2") if all_versions else None
+        
+        cand2 = pd.DataFrame()
+        if search_p2:
+            f2 = df_players.filter(lower(col("short_name")).contains(search_p2.lower()))
+            if ver_p2: f2 = f2.filter(col("fifa_version") == ver_p2)
+            cand2 = f2.select("short_name", "club_name", "overall").limit(5).toPandas()
+            
+        opts2 = [f"{r['short_name']} ({r['club_name']}) - {r['overall']}" for _, r in cand2.iterrows()] if not cand2.empty else []
+        sel_p2 = st.selectbox("Select Player B", opts2, key="sel2")
+
+    # Bottone Confronto
+    if st.button("🔥 COMPARE PLAYERS", type="primary"):
+        if sel_p1 and sel_p2:
+            name1 = sel_p1.split(" (")[0]
+            name2 = sel_p2.split(" (")[0]
+            
+            # Fetch dati
+            stats_cols = ["short_name", "overall", "potential", "pace", "shooting", "passing", "dribbling", "defending", "physic", "age", "height_cm", "weight_kg", "weak_foot", "skill_moves"]
+            stats_cols = [c for c in stats_cols if c in df_players.columns]
+            
+            p1_data = df_players.filter((col("short_name") == name1) & (col("fifa_version") == ver_p1)).select(stats_cols).toPandas().iloc[0]
+            p2_data = df_players.filter((col("short_name") == name2) & (col("fifa_version") == ver_p2)).select(stats_cols).toPandas().iloc[0]
+            
             st.divider()
-            st.subheader("Technical Sheet")
-            pdf_cmp = pdf_cmp.set_index("short_name")
-            st.dataframe(pdf_cmp.T, use_container_width=True)
-            st.subheader("Radar Chart")
-            categories = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physic']
-            categories = [c for c in categories if c in pdf_cmp.columns]
+            
+            # --- CONFRONTO VISIVO ---
+            # Definiamo le metriche da confrontare
+            metrics = [
+                ("Overall Rating", "overall"),
+                ("Potential", "potential"),
+                ("Pace", "pace"),
+                ("Shooting", "shooting"),
+                ("Passing", "passing"),
+                ("Dribbling", "dribbling"),
+                ("Defending", "defending"),
+                ("Physicality", "physic"),
+                ("Age", "age"), # Attenzione: per l'età, minore è meglio? Dipende. Qui trattiamo maggiore come numero più alto.
+                ("Height (cm)", "height_cm"),
+                ("Weight (kg)", "weight_kg"),
+                ("Weak Foot", "weak_foot"),
+                ("Skill Moves", "skill_moves")
+            ]
+            
+            # Intestazione Colonne
+            h1, h2, h3 = st.columns([1, 0.5, 1])
+            h1.markdown(f"<h3 style='text-align: center;'>{p1_data['short_name']}</h3>", unsafe_allow_html=True)
+            h2.markdown("<h3 style='text-align: center;'>VS</h3>", unsafe_allow_html=True)
+            h3.markdown(f"<h3 style='text-align: center;'>{p2_data['short_name']}</h3>", unsafe_allow_html=True)
+            
+            st.markdown("---")
+
+            # Loop per ogni statistica
+            for label, key in metrics:
+                if key not in p1_data or key not in p2_data: continue
+                
+                val1 = p1_data[key]
+                val2 = p2_data[key]
+                
+                # Gestione valori nulli
+                if pd.isna(val1): val1 = 0
+                if pd.isna(val2): val2 = 0
+                
+                # Calcolo differenza
+                diff = val1 - val2
+                
+                # Formattazione Colore
+                # Se vince P1 -> P1 Verde, P2 Grigio
+                # Se vince P2 -> P1 Grigio, P2 Verde
+                # Se Pareggio -> Entrambi Grigio
+                
+                # Eccezione Età: In genere più giovane è meglio per potenziale, ma più vecchio per esperienza.
+                # Qui trattiamo valore numerico puro: più alto vince il verde.
+                
+                color1 = "green" if val1 > val2 else "white"
+                weight1 = "bold" if val1 > val2 else "normal"
+                
+                color2 = "green" if val2 > val1 else "white"
+                weight2 = "bold" if val2 > val1 else "normal"
+                
+                # Simbolo differenza
+                if diff > 0: diff_str = f"+{int(diff)}"
+                elif diff < 0: diff_str = f"{int(diff)}" # il meno c'è già
+                else: diff_str = "="
+                
+                # Rendering Riga
+                rc1, rc2, rc3 = st.columns([1, 0.5, 1])
+                
+                with rc1:
+                    st.markdown(f"<div style='text-align: center; color: {color1}; font-weight: {weight1}; font-size: 18px;'>{int(val1)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                
+                with rc2:
+                    st.markdown(f"<div style='text-align: center; font-weight: bold; padding-top: 10px;'>{diff_str}</div>", unsafe_allow_html=True)
+                    
+                with rc3:
+                    st.markdown(f"<div style='text-align: center; color: {color2}; font-weight: {weight2}; font-size: 18px;'>{int(val2)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                
+                st.divider()
+
+            # --- RADAR CHART FINALE ---
+            st.subheader("🕸️ Radar Comparison")
+            radar_cats = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physic']
+            
             fig = go.Figure()
-            for player_name, row in pdf_cmp.iterrows():
-                values = [row[c] for c in categories]
-                values += [values[0]]
-                cats_closed = categories + [categories[0]]
-                fig.add_trace(go.Scatterpolar(r=values, theta=cats_closed, fill='toself', name=player_name))
+            
+            # P1 Trace
+            vals1 = [p1_data[c] for c in radar_cats]
+            vals1 += [vals1[0]]
+            fig.add_trace(go.Scatterpolar(r=vals1, theta=radar_cats + [radar_cats[0]], fill='toself', name=p1_data['short_name']))
+            
+            # P2 Trace
+            vals2 = [p2_data[c] for c in radar_cats]
+            vals2 += [vals2[0]]
+            fig.add_trace(go.Scatterpolar(r=vals2, theta=radar_cats + [radar_cats[0]], fill='toself', name=p2_data['short_name']))
+            
             fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
-        else: st.error("Error retrieving data for selected players.")
+
+        else:
+            st.warning("Please select both players to compare.")
 
 # ==========================================
 # MODE 3: TEAM TACTICS
@@ -359,27 +431,22 @@ elif mode == "Team Tactics":
     sel_club_tac = col_t.selectbox("Select Club", clubs_in_league)
     sel_year_tac = col_y.selectbox("Select Year", all_versions, index=0) if all_versions else None
     
-    # NUOVO SELETTORE MODULO
     st.divider()
     col_mod, _ = st.columns([1, 2])
-    sel_formation = col_mod.selectbox("Select Tactical Module", list(FORMATIONS.keys()), index=0) # 4-3-3 default
+    sel_formation = col_mod.selectbox("Select Tactical Module", list(FORMATIONS.keys()), index=0)
     
     if st.button("Show Squad"):
         with st.spinner(f"Scouting {sel_club_tac} ({sel_year_tac}) - Module {sel_formation}..."):
             df_squad = df_players.filter((col("club_name") == sel_club_tac) & (col("fifa_version") == sel_year_tac))
-            
             cols_needed = ["short_name", "player_positions", "overall", "potential", "age", "value_eur", "pace", "shooting", "passing", "dribbling", "defending", "physic"]
             cols_needed = [c for c in cols_needed if c in df_players.columns]
             squad_pdf = df_squad.select(cols_needed).orderBy(desc("overall")).toPandas()
             
             if not squad_pdf.empty:
-                # PASSIAMO IL MODULO SCELTO ALLA FUNZIONE
                 starters, bench = get_best_lineup(squad_pdf, module_name=sel_formation)
-                
                 st.subheader(f"Starting XI - {sel_club_tac} ({sel_formation})")
                 fig_pitch = create_pitch_plot(starters)
                 st.plotly_chart(fig_pitch, use_container_width=True)
-                
                 st.divider()
                 st.subheader(f"Bench ({len(bench)} players)")
                 if not bench.empty:
