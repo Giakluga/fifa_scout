@@ -369,10 +369,10 @@ elif mode == "Player Comparison":
                 # Eccezione Età: In genere più giovane è meglio per potenziale, ma più vecchio per esperienza.
                 # Qui trattiamo valore numerico puro: più alto vince il verde.
                 
-                color1 = "green" if val1 > val2 else "red"
+                color1 = "lightgreen" if val1 > val2 else "white"
                 weight1 = "bold" if val1 > val2 else "normal"
                 
-                color2 = "green" if val2 > val1 else "red"
+                color2 = "lightgreen" if val2 > val1 else "white"
                 weight2 = "bold" if val2 > val1 else "normal"
                 
                 # Simbolo differenza
