@@ -14,7 +14,6 @@ st.title("FIFA Scout")
 FORMATIONS = {
     "4-3-3": {"DEF": 4, "MID": 3, "FWD": 3},
     "4-4-2": {"DEF": 4, "MID": 4, "FWD": 2},
-    "4-2-3-1": {"DEF": 4, "MID": 5, "FWD": 1}, # 5 Mid perché include CDM/CAM
     "3-5-2": {"DEF": 3, "MID": 5, "FWD": 2},
     "5-3-2": {"DEF": 5, "MID": 3, "FWD": 2},
     "3-4-3": {"DEF": 3, "MID": 4, "FWD": 3},
