@@ -16,13 +16,12 @@ def format_currency_custom(val):
         return f"€ {val/1_000_000:.1f}M"
     return f"€ {val:,.0f}".replace(",", ".")
 
-# --- 1. DATA LOADING ---
+# --- DATA LOADING ---
 @st.cache_resource(show_spinner="Loading Datasets...")
 def get_datasets_separate():
     df_p, df_t, df_c = load_all_data()
     if df_p is None: return None, None, None
     
-    # Casting preventivo per evitare errori di tipo
     if "coach_id" in df_t.columns: df_t = df_t.withColumn("coach_id", col("coach_id").cast("int"))
     if "coach_id" in df_c.columns: df_c = df_c.withColumn("coach_id", col("coach_id").cast("int"))
     if "fifa_version" in df_t.columns: df_t = df_t.withColumn("fifa_version", col("fifa_version").cast("int"))
@@ -39,13 +38,10 @@ def get_lookups(_df_teams, _df_coaches):
     c_pdf = _df_coaches.select("coach_id", col("short_name").alias("coach_name")).distinct().toPandas()
     coach_map = dict(zip(c_pdf.coach_id, c_pdf.coach_name))
     
-    # Map Squadre e Leghe
     t_col = "club_name" if "club_name" in _df_teams.columns else "team_name"
     t_pdf = _df_teams.select(col(t_col).alias("club_name"), col("league_name").alias("league_ref")).distinct().toPandas()
     team_to_league = dict(zip(t_pdf.club_name, t_pdf.league_ref))
     
-    # Map Squadra -> Coach ID (per mostrare il coach nella tabella scouting)
-    # Nota: prendiamo l'ultimo coach associato se ci sono duplicati
     t_c_pdf = _df_teams.select(col(t_col).alias("club_name"), "coach_id").distinct().toPandas()
     team_to_coach_id = dict(zip(t_c_pdf.club_name, t_c_pdf.coach_id))
     
@@ -61,32 +57,26 @@ if "fifa_version" in df_players.columns:
     all_versions = [int(r[0]) for r in df_players.select("fifa_version").distinct().sort(desc("fifa_version")).collect()]
 else: all_versions = []
 
-# --- LOGICA FORMAZIONE (BLINDATA) ---
 def get_best_lineup(df):
     df = df.copy()
     
-    # 1. Pulizia Ruoli: Identifichiamo i portieri
     def is_goalkeeper(pos):
         if not pos: return False
         return 'GK' in pos.split(',')[0]
 
     df['is_gk'] = df['player_positions'].apply(is_goalkeeper)
     
-    # Ordiniamo per Overall
     df = df.sort_values('overall', ascending=False)
     
     # POOL PORTIERI e POOL MOVIMENTO
     gk_pool = df[df['is_gk'] == True]
     outfield_pool = df[df['is_gk'] == False]
     
-    # SELEZIONE TITOLARI
-    # 1. Prendi IL miglior portiere
     if not gk_pool.empty:
         starter_gk = gk_pool.head(1)
     else:
         starter_gk = pd.DataFrame() 
         
-    # 2. Prendi i migliori 10 giocatori di movimento (indipendentemente dal ruolo specifico per ora)
     starter_outfield = outfield_pool.head(10)
     
     # Uniamo
@@ -97,11 +87,10 @@ def get_best_lineup(df):
     
     return starters, bench
 
-# --- PLOT PITCH (SOLO PALLINI) ---
+
 def create_pitch_plot(players_df):
     fig = go.Figure()
 
-    # Campo Verde
     field_shapes = [
         dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(width=0), fillcolor="#43a047"),
         dict(type="rect", x0=0, y0=0, x1=100, y1=100, layer="below", line=dict(color="white", width=2)),
@@ -116,7 +105,6 @@ def create_pitch_plot(players_df):
 
     x_positions = {'GK': 5, 'DEF': 25, 'MID': 55, 'FWD': 85}
 
-    # Assegna posizione per il disegno
     def get_role_group_plot(pos):
         if not pos: return "MID"
         main = pos.split(',')[0]
@@ -144,7 +132,7 @@ def create_pitch_plot(players_df):
         for i, player in enumerate(p_list):
             hover_text = f"<b>{player['short_name']}</b><br>OVR: {player['overall']}<br>Pos: {player['player_positions']}"
             
-            # PALLINO
+            #point
             fig.add_trace(go.Scatter(
                 x=[x], y=[ys[i]],
                 mode='markers+text',
@@ -157,7 +145,7 @@ def create_pitch_plot(players_df):
                 showlegend=False
             ))
 
-            # NOME SOTTO
+            #name (below)
             fig.add_trace(go.Scatter(
                 x=[x], y=[ys[i] - 8],
                 mode='text',
@@ -207,7 +195,7 @@ if mode == "Advanced Scouting":
         
         with st.expander("Contracts & Ratings", expanded=True):
             if "club_contract_valid_until_year" in df_players.columns:
-                max_contract = st.slider("Contract Expiring By", 2023, 2032, 2032)
+                max_contract = st.slider("Contract Expiring By", 2023, 2050, 2032)
             else: max_contract = None
             if sel_team == "All": min_team_rating = st.slider("Min Team Rating", 50, 99, 50)
             else: min_team_rating = 50
@@ -220,7 +208,7 @@ if mode == "Advanced Scouting":
             min_wf = st.slider("Weak Foot", 1, 5, 1)
             
         with st.expander("Stats & Value", expanded=False):
-            val_range = st.slider("Max Value", 0, 150000000, 150000000, step=500000)
+            val_range = st.slider("Max Value", 0, 250000000, 250000000, step=500000)
             age_range = st.slider("Age", 15, 45, (16, 40))
             min_pot = st.slider("Min Potential", 40, 99, 50)
             min_pace = st.slider("Pace", 0, 99, 0)
@@ -236,9 +224,7 @@ if mode == "Advanced Scouting":
             valid_clubs = None
             if sel_league != "All": valid_clubs = set([c for c, l in team_to_league.items() if l == sel_league])
             if min_team_rating > 50:
-                strong_clubs = set([c for c, r in team_to_rating.items() if r >= min_team_rating]) # type: ignore (team_to_rating gestito nel scouting avanzato se serve, qui semplificato)
-                # Nota: team_to_rating rimosso da lookup globale per pulizia, se servisse va aggiunto. 
-                # Ma qui usiamo la logica semplice.
+                strong_clubs = set([c for c, r in team_to_rating.items() if r >= min_team_rating]) 
                 pass 
                 
             if valid_clubs is not None:
@@ -351,13 +337,13 @@ elif mode == "Team Tactics":
         with st.spinner(f"Scouting {sel_club_tac} ({sel_year_tac})..."):
             df_squad = df_players.filter((col("club_name") == sel_club_tac) & (col("fifa_version") == sel_year_tac))
             
-            # Fetch pulito, solo dati tecnici
+            
             cols_needed = ["short_name", "player_positions", "overall", "potential", "age", "value_eur", "pace", "shooting", "passing", "dribbling", "defending", "physic"]
             cols_needed = [c for c in cols_needed if c in df_players.columns]
             squad_pdf = df_squad.select(cols_needed).orderBy(desc("overall")).toPandas()
             
             if not squad_pdf.empty:
-                # USA LA LOGICA BLINDATA "1 PORTIERE SOLO"
+                
                 starters, bench = get_best_lineup(squad_pdf)
                 
                 st.subheader(f"Starting XI - {sel_club_tac}")
