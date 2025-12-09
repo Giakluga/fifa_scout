@@ -1,6 +1,6 @@
 # FIFA Scout - Spark & Streamlit Dashboard
 
-![FIFA Banner](https://img.shields.io/badge/FC24-Data_Analysis-black) ![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![Streamlit](https://img.shields.io/badge/Streamlit-App-red) ![PySpark](https://img.shields.io/badge/PySpark-Powered-orange)
+![FIFA Banner](https://img.shields.io/badge/FC24-Data_Analysis-black) ![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://fifascout.streamlit.app/) ![PySpark](https://img.shields.io/badge/PySpark-Powered-orange)
 
 **FIFA Scout** is a high-performance interactive dashboard for scouting and analyzing football players, teams, and coaches.
 Built using **PySpark** for big data processing and **Streamlit** for the frontend, this application is optimized to handle large datasets with minimal latency.
@@ -17,7 +17,11 @@ To ensure optimal performance with Spark, a custom **ETL (Extract, Transform, Lo
 * **Loading:** Converted all data into **Parquet format** to leverage columnar storage and compression, significantly reducing load times compared to standard CSVs.
 
 ---
+## 📍 Live Demo
+Try the app online without installing anything:
+👉 **[Click here to open FIFA Scout Dashboard](https://fifascout.streamlit.app/)**
 
+> *Note: The app runs on a free cloud instance. If the app is asleep, please click to wake it up and wait about 30-60 seconds for the Spark engine to initialize.*
 ## Key Features
 
 ### 1. Advanced Scouting Engine
