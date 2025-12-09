@@ -1,7 +1,7 @@
 # FIFA Scout - Spark & Streamlit Dashboard
 
 ![FIFA Banner](https://img.shields.io/badge/FC24-Data_Analysis-black) ![Python](https://img.shields.io/badge/Python-3.9%2B-blue) 
-![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://fifascout.streamlit.app/) ![PySpark](https://img.shields.io/badge/PySpark-Powered-orange)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://fifascout.streamlit.app/) ![PySpark](https://img.shields.io/badge/PySpark-Powered-orange)
 
 **FIFA Scout** is a high-performance interactive dashboard for scouting and analyzing football players, teams, and coaches.
 Built using **PySpark** for big data processing and **Streamlit** for the frontend, this application is optimized to handle large datasets with minimal latency.
