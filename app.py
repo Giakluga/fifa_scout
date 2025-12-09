@@ -270,7 +270,7 @@ if mode == "Advanced Scouting":
 # MODE 2: PLAYER COMPARISON (HEAD TO HEAD)
 # ==========================================
 elif mode == "Player Comparison":
-    st.markdown("## ⚔️ Head-to-Head Comparison")
+    st.markdown("## Head-to-Head Comparison")
     st.markdown("Select two players to see who wins in each category.")
 
     # Due colonne per i selettori
@@ -307,7 +307,7 @@ elif mode == "Player Comparison":
         sel_p2 = st.selectbox("Select Player B", opts2, key="sel2")
 
     # Bottone Confronto
-    if st.button("🔥 COMPARE PLAYERS", type="primary"):
+    if st.button("COMPARE PLAYERS", type="primary"):
         if sel_p1 and sel_p2:
             name1 = sel_p1.split(" (")[0]
             name2 = sel_p2.split(" (")[0]
@@ -369,10 +369,10 @@ elif mode == "Player Comparison":
                 # Eccezione Età: In genere più giovane è meglio per potenziale, ma più vecchio per esperienza.
                 # Qui trattiamo valore numerico puro: più alto vince il verde.
                 
-                color1 = "green" if val1 > val2 else "white"
+                color1 = "green" if val1 > val2 else "red"
                 weight1 = "bold" if val1 > val2 else "normal"
                 
-                color2 = "green" if val2 > val1 else "white"
+                color2 = "green" if val2 > val1 else "red"
                 weight2 = "bold" if val2 > val1 else "normal"
                 
                 # Simbolo differenza
@@ -385,19 +385,19 @@ elif mode == "Player Comparison":
                 
                 with rc1:
                     st.markdown(f"<div style='text-align: center; color: {color1}; font-weight: {weight1}; font-size: 18px;'>{int(val1)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{label}</div>", unsafe_allow_html=True)
                 
                 with rc2:
                     st.markdown(f"<div style='text-align: center; font-weight: bold; padding-top: 10px;'>{diff_str}</div>", unsafe_allow_html=True)
                     
                 with rc3:
                     st.markdown(f"<div style='text-align: center; color: {color2}; font-weight: {weight2}; font-size: 18px;'>{int(val2)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='text-align: center; font-size: 12px; color: gray;'>{label}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{label}</div>", unsafe_allow_html=True)
                 
                 st.divider()
 
             # --- RADAR CHART FINALE ---
-            st.subheader("🕸️ Radar Comparison")
+            st.subheader("Radar Comparison")
             radar_cats = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physic']
             
             fig = go.Figure()
