@@ -384,7 +384,7 @@ if st.session_state['current_page'] == "Advanced Scouting":
         if all_versions: sel_ver = st.selectbox("FIFA Version", ["All"] + all_versions)
         else: sel_ver = "All"
         with st.expander("Contracts & Ratings", expanded=True):
-            if "club_contract_valid_until_year" in df_players.columns: max_contract = st.slider("Contract Expiring By", 2023, 2032, 2032)
+            if "club_contract_valid_until_year" in df_players.columns: max_contract = st.slider("Contract Expiring By", 2023, 2050, 2032)
             else: max_contract = None
             if sel_team == "All": min_team_rating = st.slider("Min Team Rating", 50, 99, 50)
             else: min_team_rating = 50
@@ -395,7 +395,7 @@ if st.session_state['current_page'] == "Advanced Scouting":
             min_skill = st.slider("Skill Moves", 1, 5, 1)
             min_wf = st.slider("Weak Foot", 1, 5, 1)
         with st.expander("Stats & Value", expanded=False):
-            val_range = st.slider("Max Value", 0, 150000000, 150000000, step=500000)
+            val_range = st.slider("Max Value", 0, 250000000, 250000000, step=500000)
             age_range = st.slider("Age", 15, 45, (16, 40))
             min_pot = st.slider("Min Potential", 40, 99, 50)
             min_pace = st.slider("Pace", 0, 99, 0)
